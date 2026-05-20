@@ -250,47 +250,27 @@
             color: #666;
         }
 
+        .time-window-controls {
+            display: grid;
+            grid-template-columns: 1fr auto auto;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .time-window-controls button {
+            width: auto;
+            margin-bottom: 0;
+            padding: 10px 14px;
+        }
+
         .time-window-slider {
-            position: relative;
             margin-bottom: 10px;
         }
 
-        .slider-track {
-            position: relative;
-            height: 6px;
-            background: #e2e8f0;
-            border-radius: 3px;
-            cursor: pointer;
-        }
-
-        .slider-handle {
-            position: absolute;
-            top: -7px;
-            width: 20px;
-            height: 20px;
-            background: #667eea;
-            border-radius: 50%;
-            cursor: grab;
-            border: 2px solid white;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-            z-index: 10;
-        }
-
-        .slider-handle:hover {
-            background: #5a67d8;
-            transform: scale(1.1);
-        }
-
-        .slider-handle:active {
-            cursor: grabbing;
-        }
-
-        .slider-selection {
-            position: absolute;
-            height: 6px;
-            background: #48bb78;
-            border-radius: 3px;
-            top: 0;
+        .time-window-slider input[type="range"] {
+            width: 100%;
+            margin: 0;
         }
 
         .slider-labels {
@@ -483,11 +463,17 @@
 
                 <!-- Data File Selection -->
                 <div class="form-group">
+                    <label for="data-file-filter">Filter Data Files:</label>
+                    <input type="text" id="data-file-filter" placeholder="Type symbol or filename, e.g. AAPL or V_daily">
+                    <small class="form-text">Type part of a ticker or filename to filter the list</small>
+                </div>
+
+                <div class="form-group">
                     <label for="data-file-select">Select Data File:</label>
-                    <select id="data-file-select">
+                    <select id="data-file-select" size="12">
                         <option value="">Please load data file list first</option>
                     </select>
-                    <small class="form-text">Select K-line data file from data directory</small>
+                    <small class="form-text">Files are sorted alphabetically; filtered results update as you type</small>
                 </div>
 
                 <button id="load-data-btn" class="btn btn-secondary">
@@ -515,20 +501,22 @@
                         <span id="window-end">End: --</span>
                         <span id="window-size">Window Size: 400+120=520 data points</span>
                     </div>
-                    
+
+                    <div class="time-window-controls">
+                        <input type="datetime-local" id="window-end-input">
+                        <button id="window-prev-btn" class="btn btn-secondary" type="button">Prev</button>
+                        <button id="window-next-btn" class="btn btn-secondary" type="button">Next</button>
+                    </div>
+
                     <div class="time-window-slider">
-                        <div class="slider-track">
-                            <div class="slider-handle start-handle" id="start-handle"></div>
-                            <div class="slider-selection" id="slider-selection"></div>
-                            <div class="slider-handle end-handle" id="end-handle"></div>
-                        </div>
+                        <input type="range" id="window-end-slider" min="0" max="0" value="0" step="1">
                         <div class="slider-labels">
                             <span id="min-label">Earliest</span>
                             <span id="max-label">Latest</span>
                         </div>
                     </div>
                     
-                    <small class="form-text">Drag slider to select time window position for 520 data points, green area represents fixed 400+120 data point range</small>
+                    <small class="form-text">Select the ending data point. The app always uses the preceding 400 points as input and the last 120 points in the 520-point window for comparison.</small>
                 </div>
 
                 <!-- Prediction Parameters -->
@@ -638,6 +626,7 @@
         let currentDataFile = null;
         let currentDataInfo = null;
         let availableModels = [];
+        let allDataFiles = [];
         let modelLoaded = false;
 
         // Initialize after page loads
@@ -693,6 +682,15 @@
                 option.textContent = `${model.name} (${model.params}) - ${model.description}`;
                 modelSelect.appendChild(option);
             });
+
+            if (availableModels['kronos-base']) {
+                modelSelect.value = 'kronos-base';
+            }
+
+            const deviceSelect = document.getElementById('device-select');
+            if ([...deviceSelect.options].some(option => option.value === 'cuda')) {
+                deviceSelect.value = 'cuda';
+            }
         }
 
         // Load model
@@ -754,23 +752,47 @@
         async function loadDataFiles() {
             try {
                 const response = await axios.get('/api/data-files');
-                const dataFiles = response.data;
-                
-                const dataFileSelect = document.getElementById('data-file-select');
-                dataFileSelect.innerHTML = '<option value="">Please select data file</option>';
-                
-                dataFiles.forEach(file => {
-                    const option = document.createElement('option');
-                    option.value = file.path;
-                    option.textContent = `${file.name} (${file.size})`;
-                    dataFileSelect.appendChild(option);
-                });
-                
-                console.log('✅ Data file list loaded successfully:', dataFiles);
+                allDataFiles = response.data.slice().sort((a, b) => a.name.localeCompare(b.name));
+                renderDataFileOptions(allDataFiles);
+                console.log('✅ Data file list loaded successfully:', allDataFiles);
             } catch (error) {
                 console.error('❌ Failed to load data file list:', error);
                 showStatus('error', 'Failed to load data file list');
             }
+        }
+
+        function renderDataFileOptions(files) {
+            const dataFileSelect = document.getElementById('data-file-select');
+            dataFileSelect.innerHTML = '';
+
+            if (!files.length) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = 'No matching data files';
+                dataFileSelect.appendChild(option);
+                return;
+            }
+
+            files.forEach(file => {
+                const option = document.createElement('option');
+                option.value = file.path;
+                option.textContent = `${file.name} (${file.size})`;
+                dataFileSelect.appendChild(option);
+            });
+
+            if (currentDataFile && files.some(file => file.path === currentDataFile)) {
+                dataFileSelect.value = currentDataFile;
+            } else {
+                dataFileSelect.selectedIndex = 0;
+            }
+        }
+
+        function filterDataFiles() {
+            const filterValue = document.getElementById('data-file-filter').value.trim().toLowerCase();
+            const filteredFiles = !filterValue
+                ? allDataFiles
+                : allDataFiles.filter(file => file.name.toLowerCase().includes(filterValue));
+            renderDataFileOptions(filteredFiles);
         }
 
         // Load data file
@@ -830,153 +852,108 @@
 
                     // Time window slider related variables
         let sliderData = null;
-        let isDragging = false;
-        let currentHandle = null;
+        function clamp(value, min, max) {
+            return Math.min(Math.max(value, min), max);
+        }
+
+        function formatTimestamp(timestamp) {
+            return new Date(timestamp).toLocaleString();
+        }
+
+        function formatDatetimeLocalValue(timestamp) {
+            const date = new Date(timestamp);
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+        }
+
+        function getWindowSize() {
+            return 400 + 120;
+        }
+
+        function getMinEndIndex() {
+            return getWindowSize() - 1;
+        }
+
+        function getMaxEndIndex() {
+            if (!sliderData) return 0;
+            return Math.max(getMinEndIndex(), sliderData.totalRows - 1);
+        }
+
+        function getStartIndexFromEndIndex(endIndex) {
+            return Math.max(0, endIndex - getWindowSize() + 1);
+        }
+
+        function findNearestTimestampIndex(inputValue) {
+            if (!sliderData || !sliderData.timestamps.length) return 0;
+            const target = new Date(inputValue).getTime();
+            if (Number.isNaN(target)) return sliderData.totalRows - 1;
+
+            let bestIndex = getMinEndIndex();
+            let bestDistance = Number.POSITIVE_INFINITY;
+            for (let i = getMinEndIndex(); i < sliderData.timestamps.length; i++) {
+                const distance = Math.abs(new Date(sliderData.timestamps[i]).getTime() - target);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestIndex = i;
+                }
+            }
+            return bestIndex;
+        }
 
         // Initialize time window slider
         function initializeTimeSlider() {
-            // Set up slider event listeners
             setupSliderEventListeners();
         }
 
         // Set up slider event listeners
         function setupSliderEventListeners() {
-            const startHandle = document.getElementById('start-handle');
-            const endHandle = document.getElementById('end-handle');
-            const track = document.querySelector('.slider-track');
-            
-            // Start dragging
-            startHandle.addEventListener('mousedown', (e) => {
-                isDragging = true;
-                currentHandle = 'start';
-                e.preventDefault();
+            const slider = document.getElementById('window-end-slider');
+            const input = document.getElementById('window-end-input');
+            const prevBtn = document.getElementById('window-prev-btn');
+            const nextBtn = document.getElementById('window-next-btn');
+
+            slider.addEventListener('input', (e) => {
+                updateWindowSelection(parseInt(e.target.value, 10));
             });
-            
-            endHandle.addEventListener('mousedown', (e) => {
-                isDragging = true;
-                currentHandle = 'end';
-                e.preventDefault();
+
+            input.addEventListener('change', (e) => {
+                updateWindowSelection(findNearestTimestampIndex(e.target.value));
             });
-            
-            // Dragging
-            document.addEventListener('mousemove', (e) => {
-                if (!isDragging) return;
-                
-                const rect = track.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const percentage = Math.max(0, Math.min(1, x / rect.width));
-                
-                if (currentHandle === 'start') {
-                    updateStartHandle(percentage);
-                } else if (currentHandle === 'end') {
-                    updateEndHandle(percentage);
-                }
-                
-                updateSliderFromHandles();
+
+            prevBtn.addEventListener('click', () => {
+                if (!sliderData) return;
+                updateWindowSelection(parseInt(slider.value, 10) - 1);
             });
-            
-            // End dragging
-            document.addEventListener('mouseup', () => {
-                isDragging = false;
-                currentHandle = null;
-            });
-            
-            // Click track to set position directly
-            track.addEventListener('click', (e) => {
-                const rect = track.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const percentage = Math.max(0, Math.min(1, x / rect.width));
-                
-                // Determine which handle is closer to the click position
-                const startHandle = document.getElementById('start-handle');
-                const endHandle = document.getElementById('end-handle');
-                const startRect = startHandle.getBoundingClientRect();
-                const endRect = endHandle.getBoundingClientRect();
-                
-                if (Math.abs(x - (startRect.left - rect.left)) < Math.abs(x - (endRect.left - rect.left))) {
-                    updateStartHandle(percentage);
-                } else {
-                    updateEndHandle(percentage);
-                }
-                
-                updateSliderFromHandles();
+
+            nextBtn.addEventListener('click', () => {
+                if (!sliderData) return;
+                updateWindowSelection(parseInt(slider.value, 10) + 1);
             });
         }
 
-        // Update start handle position
-        function updateStartHandle(percentage) {
-            const startHandle = document.getElementById('start-handle');
-            const selection = document.getElementById('slider-selection');
-            
-            // Fixed window size of 520 data points
-            const windowSize = 520;
-            const totalRows = sliderData ? sliderData.totalRows : 1000;
-            const windowPercentage = windowSize / totalRows;
-            
-            // Ensure start handle doesn't cause window to exceed data range
-            if (percentage + windowPercentage > 1) {
-                percentage = 1 - windowPercentage;
-            }
-            
-            startHandle.style.left = (percentage * 100) + '%';
-            selection.style.left = (percentage * 100) + '%';
-            selection.style.width = (windowPercentage * 100) + '%';
-            
-            // Automatically adjust end handle position to maintain fixed window size
-            const endHandle = document.getElementById('end-handle');
-            endHandle.style.left = ((percentage + windowPercentage) * 100) + '%';
-        }
-
-        // Update end handle position
-        function updateEndHandle(percentage) {
-            const endHandle = document.getElementById('end-handle');
-            const selection = document.getElementById('slider-selection');
-            
-            // Fixed window size of 520 data points
-            const windowSize = 520;
-            const totalRows = sliderData ? sliderData.totalRows : 1000;
-            const windowPercentage = windowSize / totalRows;
-            
-            // Ensure end handle doesn't cause window to exceed data range
-            if (percentage - windowPercentage < 0) {
-                percentage = windowPercentage;
-            }
-            
-            endHandle.style.left = (percentage * 100) + '%';
-            selection.style.left = ((percentage - windowPercentage) * 100) + '%';
-            selection.style.width = (windowPercentage * 100) + '%';
-            
-            // Automatically adjust start handle position to maintain fixed window size
-            const startHandle = document.getElementById('start-handle');
-            startHandle.style.left = ((percentage - windowPercentage) * 100) + '%';
-        }
-
-        // Update slider display based on handle positions
-        function updateSliderFromHandles() {
-            const startHandle = document.getElementById('start-handle');
-            const endHandle = document.getElementById('end-handle');
-            
-            const startPercentage = parseFloat(startHandle.style.left) / 100;
-            const endPercentage = parseFloat(endHandle.style.left) / 100;
-            
+        function updateWindowSelection(endIndex) {
             if (!sliderData) return;
-            
-            // Calculate selected time range
-            const totalTime = sliderData.endDate.getTime() - sliderData.startDate.getTime();
-            const startTime = sliderData.startDate.getTime() + (totalTime * startPercentage);
-            const endTime = sliderData.startDate.getTime() + (totalTime * endPercentage);
-            
-            const startDate = new Date(startTime);
-            const endDate = new Date(endTime);
-            
-            // Update display information
-            document.getElementById('window-start').textContent = `Start: ${startDate.toLocaleDateString()}`;
-            document.getElementById('window-end').textContent = `End: ${endDate.toLocaleDateString()}`;
-            
-            // Display fixed window size
+
+            const slider = document.getElementById('window-end-slider');
+            const input = document.getElementById('window-end-input');
+            const prevBtn = document.getElementById('window-prev-btn');
+            const nextBtn = document.getElementById('window-next-btn');
+
+            const clampedEndIndex = clamp(endIndex, getMinEndIndex(), getMaxEndIndex());
+            const startIndex = getStartIndexFromEndIndex(clampedEndIndex);
+            const startTimestamp = sliderData.timestamps[startIndex];
+            const endTimestamp = sliderData.timestamps[clampedEndIndex];
+
+            slider.value = clampedEndIndex;
+            slider.dataset.endIndex = clampedEndIndex;
+            slider.dataset.startIndex = startIndex;
+            input.value = formatDatetimeLocalValue(endTimestamp);
+            prevBtn.disabled = clampedEndIndex <= getMinEndIndex();
+            nextBtn.disabled = clampedEndIndex >= getMaxEndIndex();
+
+            document.getElementById('window-start').textContent = `Start: ${formatTimestamp(startTimestamp)}`;
+            document.getElementById('window-end').textContent = `End: ${formatTimestamp(endTimestamp)}`;
             document.getElementById('window-size').textContent = `Window Size: 400 + 120 = 520 data points (fixed)`;
-            
-            // Input field values remain fixed
             document.getElementById('lookback').value = 400;
             document.getElementById('pred-len').value = 120;
         }
@@ -990,25 +967,14 @@
             const predLen = 120;
             const windowSize = lookback + predLen; // Fixed at 520
             
-            // Calculate slider position
             const totalRows = sliderData.totalRows;
-            
+
             if (windowSize > totalRows) {
-                // If window size exceeds total data amount, show error
                 showStatus('error', `Insufficient data, need at least ${windowSize} data points, currently only ${totalRows} available`);
                 return;
             }
-            
-            // Calculate slider position (default select first half of data)
-            const startPercentage = 0.1; // Start from 10%
-            const endPercentage = startPercentage + (windowSize / totalRows);
-            
-            // Update handle positions
-            updateStartHandle(startPercentage);
-            updateEndHandle(endPercentage);
-            
-            // Update display information
-            updateSliderFromHandles();
+
+            updateWindowSelection(totalRows - 1);
         }
 
         // Initialize time window slider
@@ -1016,6 +982,7 @@
             sliderData = {
                 startDate: new Date(dataInfo.start_date),
                 endDate: new Date(dataInfo.end_date),
+                timestamps: dataInfo.timestamps,
                 totalRows: dataInfo.rows,
                 timeframe: dataInfo.timeframe
             };
@@ -1023,6 +990,11 @@
             // Set slider labels
             document.getElementById('min-label').textContent = dataInfo.start_date.split('T')[0];
             document.getElementById('max-label').textContent = dataInfo.end_date.split('T')[0];
+
+            const slider = document.getElementById('window-end-slider');
+            slider.min = getMinEndIndex();
+            slider.max = getMaxEndIndex();
+            slider.step = 1;
             
             // Initialize slider position
             updateSliderFromInputs();
@@ -1048,18 +1020,13 @@
                 const predLen = parseInt(document.getElementById('pred-len').value);
                 
                 // Get selected time range from time window slider
-                const startHandle = document.getElementById('start-handle');
-                const startPercentage = parseFloat(startHandle.style.left) / 100;
-                
                 if (!sliderData) {
                     showStatus('error', 'Time window slider not initialized');
                     return;
                 }
-                
-                // Calculate selected time range
-                const totalTime = sliderData.endDate.getTime() - sliderData.startDate.getTime();
-                const startTime = sliderData.startDate.getTime() + (totalTime * startPercentage);
-                const startDate = new Date(startTime);
+                const endSlider = document.getElementById('window-end-slider');
+                const startIndex = parseInt(endSlider.dataset.startIndex || '0', 10);
+                const startTimestamp = sliderData.timestamps[startIndex];
                 
                 // Get prediction quality parameters
                 const temperature = parseFloat(document.getElementById('temperature').value);
@@ -1070,7 +1037,7 @@
                     file_path: currentDataFile,
                     lookback: lookback,
                     pred_len: predLen,
-                    start_date: startDate.toISOString().slice(0, 16), // Format as YYYY-MM-DDTHH:MM
+                    start_date: startTimestamp,
                     temperature: temperature,
                     top_p: topP,
                     sample_count: sampleCount
@@ -1193,6 +1160,9 @@
             
             // Load data button
             document.getElementById('load-data-btn').addEventListener('click', loadData);
+
+            // Data file filter
+            document.getElementById('data-file-filter').addEventListener('input', filterDataFiles);
             
             // Prediction button
             document.getElementById('predict-btn').addEventListener('click', startPrediction);
